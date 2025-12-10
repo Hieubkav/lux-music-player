@@ -1,0 +1,5 @@
+{
+  "name": "Lux Music Player",
+  "description": "A high-fidelity, glassmorphism music player interface redesign using React and Tailwind CSS.",
+  "requestFramePermissions": []
+}
