@@ -13,38 +13,116 @@ const App: React.FC = () => {
     volume: 75,
   });
 
-  const timerRef = useRef<number | null>(null);
+  // Ref to hold the Audio instance
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize Audio Object once
+  useEffect(() => {
+    audioRef.current = new Audio(TRACKS[0].url);
+    audioRef.current.volume = 0.75;
+
+    // Cleanup
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   // Derived state
   const currentTrackIndex = TRACKS.findIndex(t => t.id === playerState.currentTrackId);
   const currentTrack = TRACKS[currentTrackIndex] || TRACKS[0];
 
-  // Logic: Timer for progress
+  // Logic: Handle Track Change
   useEffect(() => {
-    if (playerState.isPlaying) {
-      timerRef.current = window.setInterval(() => {
-        setPlayerState(prev => {
-          if (prev.currentTime >= currentTrack.duration) {
-            // Auto play next
-            handleNext();
-            return prev;
-          }
-          return { ...prev, currentTime: prev.currentTime + 1 };
+    if (!audioRef.current) return;
+
+    const audio = audioRef.current;
+    const currentUrl = currentTrack.url;
+
+    // Only change source if it's different to prevent reloading on re-renders
+    if (currentUrl && audio.src !== currentUrl) {
+      audio.src = currentUrl;
+      audio.load();
+      if (playerState.isPlaying) {
+        audio.play().catch(error => {
+          console.error("Playback failed:", error);
+          setPlayerState(prev => ({ ...prev, isPlaying: false }));
         });
-      }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+      }
     }
+  }, [playerState.currentTrackId, currentTrack.url, playerState.isPlaying]);
+
+  // Logic: Handle Play/Pause actions
+  useEffect(() => {
+    if (!audioRef.current) return;
+
+    if (playerState.isPlaying) {
+      const playPromise = audioRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.error("Playback prevented:", error);
+          // Revert state if play failed (e.g. browser policy)
+          setPlayerState(prev => ({ ...prev, isPlaying: false }));
+        });
+      }
+    } else {
+      audioRef.current.pause();
+    }
+  }, [playerState.isPlaying]);
+
+  // Logic: Handle Volume Change
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = playerState.volume / 100;
+    }
+  }, [playerState.volume]);
+
+  // Logic: Event Listeners for Time Update and Song End
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const updateTime = () => {
+      setPlayerState(prev => ({ ...prev, currentTime: audio.currentTime }));
+    };
+
+    const handleEnded = () => {
+      // Auto play next track
+      setPlayerState(prev => {
+        const currentIndex = TRACKS.findIndex(t => t.id === prev.currentTrackId);
+        const nextIndex = (currentIndex + 1) % TRACKS.length;
+        return {
+          ...prev,
+          currentTrackId: TRACKS[nextIndex].id,
+          currentTime: 0,
+          isPlaying: true
+        };
+      });
+    };
+
+    audio.addEventListener('timeupdate', updateTime);
+    audio.addEventListener('ended', handleEnded);
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      audio.removeEventListener('timeupdate', updateTime);
+      audio.removeEventListener('ended', handleEnded);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playerState.isPlaying, playerState.currentTrackId]);
+  }, []); // Run once to attach static listeners that depend on state setter only
 
   // Handlers
   const togglePlay = () => {
     setPlayerState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
+  };
+
+  const changeTrack = (id: string) => {
+    setPlayerState(prev => ({
+      ...prev,
+      currentTrackId: id,
+      currentTime: 0,
+      isPlaying: true // Auto play when clicking a new track
+    }));
   };
 
   const handleNext = () => {
@@ -57,16 +135,10 @@ const App: React.FC = () => {
     changeTrack(TRACKS[prevIndex].id);
   };
 
-  const changeTrack = (id: string) => {
-    setPlayerState(prev => ({
-      ...prev,
-      currentTrackId: id,
-      currentTime: 0,
-      isPlaying: true // Auto play on switch
-    }));
-  };
-
   const handleSeek = (time: number) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = time;
+    }
     setPlayerState(prev => ({ ...prev, currentTime: time }));
   };
 
@@ -92,7 +164,7 @@ const App: React.FC = () => {
             onNext={handleNext}
             onPrev={handlePrev}
             currentTime={playerState.currentTime}
-            duration={currentTrack.duration}
+            duration={currentTrack.duration} // Use static duration for smoother UI, or audio.duration if loaded
             onSeek={handleSeek}
             volume={playerState.volume}
             onVolumeChange={handleVolumeChange}
